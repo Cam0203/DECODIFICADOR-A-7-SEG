@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Decodificador BCD · grupoFLJ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+<style>
+  :root{
+    --bg:#0a0e14;
+    --panel:#11161e;
+    --panel-raised:#161c26;
+    --border:#242c38;
+    --led:#ff4433;
+    --led-off:#241512;
+    --green:#33d488;
+    --amber:#ffb454;
+    --text:#cfd8e3;
+    --text-dim:#5c6779;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:
+      radial-gradient(circle at 20% 20%, rgba(255,68,51,0.05), transparent 45%),
+      radial-gradient(circle at 80% 85%, rgba(51,212,136,0.05), transparent 45%),
+      var(--bg);
+    background-image:
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px),
+      radial-gradient(circle at 20% 20%, rgba(255,68,51,0.05), transparent 45%),
+      radial-gradient(circle at 80% 85%, rgba(51,212,136,0.05), transparent 45%);
+    background-size:28px 28px, 28px 28px, auto, auto;
+    font-family:'Manrope', sans-serif;
+    color:var(--text);
+    padding:24px;
+  }
+  .device{
+    width:380px;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:14px;
+    box-shadow:0 30px 60px -20px rgba(0,0,0,0.6);
+    position:relative;
+    overflow:hidden;
+  }
+  .device::before, .device::after{
+    content:"";
+    position:absolute;
+    width:6px; height:6px;
+    border-radius:50%;
+    background:#3a4353;
+    box-shadow:inset 0 1px 1px rgba(0,0,0,0.5);
+  }
+  .device::before{ top:12px; left:12px; }
+  .device::after{ top:12px; right:12px; }
+
+  .header{
+    padding:22px 24px 16px;
+    border-bottom:1px solid var(--border);
+  }
+  .title{
+    font-size:16px;
+    font-weight:800;
+    letter-spacing:-0.01em;
+    margin:0 0 2px;
+  }
+  .subtitle{
+    font-size:12.5px;
+    color:var(--text-dim);
+    font-family:'JetBrains Mono', monospace;
+    margin:0;
+  }
+  .status{
+    margin-top:12px;
+    display:inline-flex;
+    align-items:center;
+    gap:7px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:11.5px;
+    padding:5px 10px;
+    border-radius:999px;
+    background:var(--panel-raised);
+    border:1px solid var(--border);
+    color:var(--text-dim);
+  }
+  .status .dot{
+    width:7px; height:7px; border-radius:50%;
+    background:var(--text-dim);
+    transition:background .2s, box-shadow .2s;
+  }
+  .status.ok{ color:var(--green); }
+  .status.ok .dot{ background:var(--green); box-shadow:0 0 8px var(--green); }
+  .status.err{ color:#ff6b5e; }
+  .status.err .dot{ background:#ff6b5e; box-shadow:0 0 8px #ff6b5e; }
+
+  .display-area{
+    padding:26px 24px 18px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:16px;
+  }
+  .digit-frame{
+    background:#05070a;
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:18px 30px;
+  }
+  .segment{ stroke:var(--led-off); transition:stroke .12s, filter .12s; }
+  .segment.on{ stroke:var(--led); filter:drop-shadow(0 0 7px var(--led)) drop-shadow(0 0 14px rgba(255,68,51,0.4)); }
+
+  .bits-row{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    font-family:'JetBrains Mono', monospace;
+  }
+  .bits-label{ font-size:11px; color:var(--text-dim); }
+  .bit{
+    width:20px; height:20px;
+    border-radius:5px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:12px; font-weight:700;
+    background:var(--panel-raised);
+    border:1px solid var(--border);
+    color:var(--text-dim);
+  }
+  .bit.on{ color:var(--amber); border-color:rgba(255,180,84,0.5); box-shadow:0 0 8px rgba(255,180,84,0.35) inset; }
+
+  .origin{
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px;
+    color:var(--text-dim);
+  }
+  .origin b{ color:var(--text); font-weight:500; }
+
+  .keypad{
+    padding:4px 24px 24px;
+    display:grid;
+    grid-template-columns:repeat(5, 1fr);
+    gap:8px;
+  }
+  .key{
+    aspect-ratio:1;
+    border-radius:6px;
+    border:1px solid var(--border);
+    background:linear-gradient(180deg, var(--panel-raised), #10151d);
+    color:var(--text);
+    font-family:'JetBrains Mono', monospace;
+    font-size:15px;
+    font-weight:500;
+    cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition:transform .08s, border-color .15s, color .15s;
+  }
+  .key:hover{ border-color:var(--amber); color:var(--amber); }
+  .key:active{ transform:scale(0.92); }
+
+  .footer{
+    padding:14px 24px;
+    border-top:1px solid var(--border);
+    font-family:'JetBrains Mono', monospace;
+    font-size:10px;
+    color:var(--text-dim);
+    line-height:1.6;
+    word-break:break-all;
+  }
+</style>
+</head>
+<body>
+
+<div class="device">
+  <div class="header">
+    <p class="title">Decodificador BCD a 7 segmentos</p>
+    <p class="subtitle">panel de control remoto · grupo FLJ</p>
+    <div id="estado" class="status">
+      <span class="dot"></span>
+      <span class="label">conectando…</span>
+    </div>
+  </div>
+
+  <div class="display-area">
+    <div class="digit-frame">
+      <svg width="90" height="150" viewBox="0 0 100 180">
+        <line id="seg-a" class="segment" x1="28" y1="12" x2="72" y2="12" stroke-width="12" stroke-linecap="round"/>
+        <line id="seg-f" class="segment" x1="22" y1="18" x2="22" y2="86" stroke-width="12" stroke-linecap="round"/>
+        <line id="seg-b" class="segment" x1="78" y1="18" x2="78" y2="86" stroke-width="12" stroke-linecap="round"/>
+        <line id="seg-g" class="segment" x1="28" y1="90" x2="72" y2="90" stroke-width="12" stroke-linecap="round"/>
+        <line id="seg-e" class="segment" x1="22" y1="94" x2="22" y2="162" stroke-width="12" stroke-linecap="round"/>
+        <line id="seg-c" class="segment" x1="78" y1="94" x2="78" y2="162" stroke-width="12" stroke-linecap="round"/>
+        <line id="seg-d" class="segment" x1="28" y1="168" x2="72" y2="168" stroke-width="12" stroke-linecap="round"/>
+      </svg>
+    </div>
+
+    <div class="bits-row">
+      <span class="bits-label">bits</span>
+      <span id="display_bin" class="bit-holder" style="display:flex; gap:6px;">
+        <span class="bit" data-bit="0">0</span>
+        <span class="bit" data-bit="1">0</span>
+        <span class="bit" data-bit="2">0</span>
+        <span class="bit" data-bit="3">0</span>
+      </span>
+    </div>
+
+    <p class="origin">origen: <b id="origen_txt">esperando datos…</b></p>
+  </div>
+
+  <div class="keypad" id="teclado"></div>
+
+  <div class="footer" id="topics-footer"></div>
+</div>
+
+<script>
+  // ===================================================
+  // CONFIGURACIÓN — debe coincidir EXACTAMENTE con el ESP32
+  // ===================================================
+  const GRUPO = "grupoFLJ";
+  const TOPIC_ESTADO  = "clase/decoder/" + GRUPO + "/estado";
+  const TOPIC_CONTROL = "clase/decoder/" + GRUPO + "/control";
+
+  document.getElementById("topics-footer").textContent =
+    "estado: " + TOPIC_ESTADO + "  |  control: " + TOPIC_CONTROL;
+
+  // Tabla de segmentos — idéntica a la del main.py del ESP32
+  // orden: a, b, c, d, e, f, g
+  const SEGMENTOS = {
+    0:[1,1,1,1,1,1,0], 1:[0,1,1,0,0,0,0], 2:[1,1,0,1,1,0,1],
+    3:[1,1,1,1,0,0,1], 4:[0,1,1,0,0,1,1], 5:[1,0,1,1,0,1,1],
+    6:[1,0,1,1,1,1,1], 7:[1,1,1,0,0,0,0], 8:[1,1,1,1,1,1,1],
+    9:[1,1,1,1,0,1,1]
+  };
+  const ORDEN_SEGMENTOS = ["a","b","c","d","e","f","g"];
+
+  function pintarDigito(num){
+    const patron = SEGMENTOS[num];
+    if(!patron) return;
+    ORDEN_SEGMENTOS.forEach((seg, i) => {
+      const el = document.getElementById("seg-" + seg);
+      el.classList.toggle("on", patron[i] === 1);
+    });
+  }
+
+  function pintarBits(binario){
+    const bits = document.querySelectorAll("#display_bin .bit");
+    for(let i = 0; i < 4; i++){
+      const valor = binario[i] || "0";
+      bits[i].textContent = valor;
+      bits[i].classList.toggle("on", valor === "1");
+    }
+  }
+
+  function setEstado(clase, texto){
+    const el = document.getElementById("estado");
+    el.className = "status " + clase;
+    el.querySelector(".label").textContent = texto;
+  }
+
+  // ===================================================
+  // CLIENTE MQTT (Paho, vía WebSockets)
+  // ===================================================
+  const client = new Paho.MQTT.Client(
+    "broker.hivemq.com",
+    8884,
+    "web_" + GRUPO + "_" + Math.floor(Math.random() * 100000)
+  );
+
+  client.onConnectionLost = (resp) => {
+    setEstado("err", "conexión perdida: " + resp.errorMessage);
+  };
+
+  client.onMessageArrived = (message) => {
+    try {
+      const datos = message.payloadString.split(",");
+      if (datos.length !== 2) return;
+      const [binario, decimalStr] = datos;
+      const num = parseInt(decimalStr);
+      if (!isNaN(num) && num >= 0 && num <= 9 && binario.length === 4) {
+        pintarDigito(num);
+        pintarBits(binario);
+        document.getElementById("origen_txt").textContent = "DIP switch (hardware)";
+      }
+    } catch (e) {
+      console.error("[onMessageArrived]", e);
+    }
+  };
+
+  client.connect({
+    useSSL: true,
+    onSuccess: () => {
+      setEstado("ok", "conectado");
+      client.subscribe(TOPIC_ESTADO);
+    },
+    onFailure: (err) => {
+      setEstado("err", "error: " + err.errorMessage);
+    }
+  });
+
+  function enviarComando(numero){
+    if (numero < 0 || numero > 9) return;
+    const msg = new Paho.MQTT.Message(String(numero));
+    msg.destinationName = TOPIC_CONTROL;
+    client.send(msg);
+
+    pintarDigito(numero);
+    document.getElementById("origen_txt").textContent = "teclado (interfaz)";
+  }
+
+  // Generar teclado 0-9
+  const teclado = document.getElementById("teclado");
+  for (let i = 0; i <= 9; i++) {
+    const btn = document.createElement("button");
+    btn.className = "key";
+    btn.textContent = i;
+    btn.onclick = () => enviarComando(i);
+    teclado.appendChild(btn);
+  }
+</script>
+
+</body>
+</html>
